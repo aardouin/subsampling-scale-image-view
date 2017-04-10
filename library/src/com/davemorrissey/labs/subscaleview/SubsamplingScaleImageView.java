@@ -16,6 +16,7 @@ limitations under the License.
 
 package com.davemorrissey.labs.subscaleview;
 
+import android.animation.TimeInterpolator;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.res.TypedArray;
@@ -23,6 +24,7 @@ import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Interpolator;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Paint.Style;
@@ -47,6 +49,9 @@ import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewParent;
+import android.view.animation.AccelerateDecelerateInterpolator;
+import android.view.animation.AccelerateInterpolator;
+import android.view.animation.LinearInterpolator;
 
 import com.davemorrissey.labs.subscaleview.R.styleable;
 import com.davemorrissey.labs.subscaleview.decoder.CompatDecoderFactory;
@@ -103,13 +108,6 @@ public class SubsamplingScaleImageView extends View {
     public static final int ZOOM_FOCUS_CENTER_IMMEDIATE = 3;
 
     private static final List<Integer> VALID_ZOOM_STYLES = Arrays.asList(ZOOM_FOCUS_FIXED, ZOOM_FOCUS_CENTER, ZOOM_FOCUS_CENTER_IMMEDIATE);
-
-    /** Quadratic ease out. Not recommended for scale animation, but good for panning. */
-    public static final int EASE_OUT_QUAD = 1;
-    /** Quadratic ease in and out. */
-    public static final int EASE_IN_OUT_QUAD = 2;
-
-    private static final List<Integer> VALID_EASING_STYLES = Arrays.asList(EASE_IN_OUT_QUAD, EASE_OUT_QUAD);
 
     /** Don't allow the image to be panned off screen. As much of the image as possible is always displayed, centered in the view when it is smaller. This is the best option for galleries. */
     public static final int PAN_LIMIT_INSIDE = 1;
@@ -281,6 +279,7 @@ public class SubsamplingScaleImageView extends View {
 
     //The logical density of the display
     private float density;
+    private TimeInterpolator mInterpolator = new LinearInterpolator();
 
 
     public SubsamplingScaleImageView(Context context, AttributeSet attr) {
@@ -528,7 +527,7 @@ public class SubsamplingScaleImageView extends View {
                     PointF vTranslateEnd = new PointF(vTranslate.x + (velocityX * 0.25f), vTranslate.y + (velocityY * 0.25f));
                     float sCenterXEnd = ((getWidth()/2) - vTranslateEnd.x)/scale;
                     float sCenterYEnd = ((getHeight()/2) - vTranslateEnd.y)/scale;
-                    new AnimationBuilder(new PointF(sCenterXEnd, sCenterYEnd)).withEasing(EASE_OUT_QUAD).withPanLimited(false).withOrigin(ORIGIN_FLING).start();
+                    new AnimationBuilder(new PointF(sCenterXEnd, sCenterYEnd)).withInterpolator(new AccelerateDecelerateInterpolator()).withPanLimited(false).withOrigin(ORIGIN_FLING).start();
                     return true;
                 }
                 return super.onFling(e1, e2, velocityX, velocityY);
@@ -961,14 +960,14 @@ public class SubsamplingScaleImageView extends View {
             if (vTranslateBefore == null) { vTranslateBefore = new PointF(0, 0); }
             vTranslateBefore.set(vTranslate);
 
-            long scaleElapsed = System.currentTimeMillis() - anim.time;
-            boolean finished = scaleElapsed > anim.duration;
-            scaleElapsed = Math.min(scaleElapsed, anim.duration);
-            scale = ease(anim.easing, scaleElapsed, anim.scaleStart, anim.scaleEnd - anim.scaleStart, anim.duration);
+            long animTimeElapsed = System.currentTimeMillis() - anim.time;
+            boolean finished = animTimeElapsed > anim.duration;
+            animTimeElapsed = Math.min(animTimeElapsed, anim.duration);
+            scale = ease(animTimeElapsed, anim.scaleStart, anim.scaleEnd - anim.scaleStart, anim.duration);
 
             // Apply required animation to the focal point
-            float vFocusNowX = ease(anim.easing, scaleElapsed, anim.vFocusStart.x, anim.vFocusEnd.x - anim.vFocusStart.x, anim.duration);
-            float vFocusNowY = ease(anim.easing, scaleElapsed, anim.vFocusStart.y, anim.vFocusEnd.y - anim.vFocusStart.y, anim.duration);
+            float vFocusNowX = ease(animTimeElapsed, anim.vFocusStart.x, anim.vFocusEnd.x - anim.vFocusStart.x, anim.duration);
+            float vFocusNowY = ease(animTimeElapsed, anim.vFocusStart.y, anim.vFocusEnd.y - anim.vFocusStart.y, anim.duration);
             // Find out where the focal point is at this scale and adjust its position to follow the animation path
             vTranslate.x -= sourceToViewX(anim.sCenterEnd.x) - vFocusNowX;
             vTranslate.y -= sourceToViewY(anim.sCenterEnd.y) - vFocusNowY;
@@ -976,7 +975,7 @@ public class SubsamplingScaleImageView extends View {
             // For translate anims, showing the image non-centered is never allowed, for scaling anims it is during the animation.
             fitToBounds(finished || (anim.scaleStart == anim.scaleEnd));
             sendStateChanged(scaleBefore, vTranslateBefore, anim.origin);
-            refreshRequiredTiles(finished);
+            refreshRequiredTiles(true);
             if (finished) {
                 if (anim.listener != null) {
                     try {
@@ -1863,7 +1862,6 @@ public class SubsamplingScaleImageView extends View {
         private PointF vFocusEnd; // Where the view focal point should be moved to during the anim
         private long duration = 500; // How long the anim takes
         private boolean interruptible = true; // Whether the anim can be interrupted by a touch
-        private int easing = EASE_IN_OUT_QUAD; // Easing style
         private int origin = ORIGIN_ANIM; // Animation origin (API, double tap or fling)
         private long time = System.currentTimeMillis(); // Start time
         private OnAnimationEventListener listener; // Event listener
@@ -2172,53 +2170,15 @@ public class SubsamplingScaleImageView extends View {
 
     /**
      * Apply a selected type of easing.
-     * @param type Easing type, from static fields
      * @param time Elapsed time
      * @param from Start value
-     * @param change Target value
+     * @param delta Target value
      * @param duration Anm duration
      * @return Current value
      */
-    private float ease(int type, long time, float from, float change, long duration) {
-        switch (type) {
-            case EASE_IN_OUT_QUAD:
-                return easeInOutQuad(time, from, change, duration);
-            case EASE_OUT_QUAD:
-                return easeOutQuad(time, from, change, duration);
-            default:
-                throw new IllegalStateException("Unexpected easing type: " + type);
-        }
-    }
-
-    /**
-     * Quadratic easing for fling. With thanks to Robert Penner - http://gizma.com/easing/
-     * @param time Elapsed time
-     * @param from Start value
-     * @param change Target value
-     * @param duration Anm duration
-     * @return Current value
-     */
-    private float easeOutQuad(long time, float from, float change, long duration) {
-        float progress = (float)time/(float)duration;
-        return -change * progress*(progress-2) + from;
-    }
-
-    /**
-     * Quadratic easing for scale and center animations. With thanks to Robert Penner - http://gizma.com/easing/
-     * @param time Elapsed time
-     * @param from Start value
-     * @param change Target value
-     * @param duration Anm duration
-     * @return Current value
-     */
-    private float easeInOutQuad(long time, float from, float change, long duration) {
-        float timeF = time/(duration/2f);
-        if (timeF < 1) {
-            return (change/2f * timeF * timeF) + from;
-        } else {
-            timeF--;
-            return (-change/2f) * (timeF * (timeF - 2) - 1) + from;
-        }
+    private float ease(long time, float from, float delta, long duration) {
+        float progress = mInterpolator.getInterpolation((float)time / duration);
+        return delta * progress + from;
     }
 
     /**
@@ -2721,11 +2681,11 @@ public class SubsamplingScaleImageView extends View {
         private final PointF targetSCenter;
         private final PointF vFocus;
         private long duration = 500;
-        private int easing = EASE_IN_OUT_QUAD;
         private int origin = ORIGIN_ANIM;
         private boolean interruptible = true;
         private boolean panLimited = true;
         private OnAnimationEventListener listener;
+        private TimeInterpolator interpolator;
 
         private AnimationBuilder(PointF sCenter) {
             this.targetScale = scale;
@@ -2772,15 +2732,12 @@ public class SubsamplingScaleImageView extends View {
         }
 
         /**
-         * Set the easing style. See static fields. {@link #EASE_IN_OUT_QUAD} is recommended, and the default.
-         * @param easing easing style.
+         * Set the interpolator to be used for the animation.
+         * @param interpolator interpolator
          * @return this builder for method chaining.
          */
-        public AnimationBuilder withEasing(int easing) {
-            if (!VALID_EASING_STYLES.contains(easing)) {
-                throw new IllegalArgumentException("Unknown easing type: " + easing);
-            }
-            this.easing = easing;
+        public AnimationBuilder withInterpolator(TimeInterpolator interpolator) {
+            this.interpolator = interpolator;
             return this;
         }
 
@@ -2843,7 +2800,6 @@ public class SubsamplingScaleImageView extends View {
             );
             anim.duration = duration;
             anim.interruptible = interruptible;
-            anim.easing = easing;
             anim.origin = origin;
             anim.time = System.currentTimeMillis();
             anim.listener = listener;
