@@ -279,7 +279,7 @@ public class SubsamplingScaleImageView extends View {
 
     //The logical density of the display
     private float density;
-    private TimeInterpolator mInterpolator = new LinearInterpolator();
+    private TimeInterpolator mInterpolator;
 
 
     public SubsamplingScaleImageView(Context context, AttributeSet attr) {
@@ -2686,7 +2686,7 @@ public class SubsamplingScaleImageView extends View {
         private boolean interruptible = true;
         private boolean panLimited = true;
         private OnAnimationEventListener listener;
-        private TimeInterpolator interpolator;
+        private TimeInterpolator interpolator = new AccelerateDecelerateInterpolator();;
 
         private AnimationBuilder(PointF sCenter) {
             this.targetScale = scale;
