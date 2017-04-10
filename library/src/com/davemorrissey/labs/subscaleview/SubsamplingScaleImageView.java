@@ -1861,6 +1861,7 @@ public class SubsamplingScaleImageView extends View {
         private PointF vFocusStart; // View point that was double tapped
         private PointF vFocusEnd; // Where the view focal point should be moved to during the anim
         private long duration = 500; // How long the anim takes
+        private TimeInterpolator interpolator; // Animation interpolator
         private boolean interruptible = true; // Whether the anim can be interrupted by a touch
         private int origin = ORIGIN_ANIM; // Animation origin (API, double tap or fling)
         private long time = System.currentTimeMillis(); // Start time
@@ -2803,6 +2804,8 @@ public class SubsamplingScaleImageView extends View {
             anim.origin = origin;
             anim.time = System.currentTimeMillis();
             anim.listener = listener;
+            anim.interpolator = interpolator;
+            mInterpolator = interpolator;
 
             if (vFocus != null) {
                 // Calculate where translation will be at the end of the anim
